@@ -1,6 +1,6 @@
 ---
 name: enterprise-ai-scenario-map
-description: 企业AI场景地图生成报告工具。通过 web-search 深度调研企业信息，按照V2.1标准模板生成结构化AI应用场景地图报告，包含企业画像、业务诊断、行业实践、AI场景全量表、实施路径等完整内容。
+description: 企业AI场景地图与系统构建规划工具。通过 web-search 深度调研企业信息，先生成V2.1结构化AI应用场景地图报告，再按需进入系统构建规划，输出多维表清单并调用批量构建 API 流式执行。
 ---
 
 # 企业AI场景地图生成器
@@ -14,6 +14,9 @@ description: 企业AI场景地图生成报告工具。通过 web-search 深度�
   3. 同行业AI最佳实践案例搜索
   4. AI应用场景地图生成（30+场景全量表，含优先级建议）
   5. 实施路径规划（分阶段落地计划）
+  6. 报告后的系统构建规划分支（单入口显式模式分支）
+  7. 多维表清单中间结构生成与用户确认
+  8. 通过脚本拼装批量构建请求并调用流式 API
 - 触发条件：用户需要为某家企业制定AI落地规划，或想了解"我的公司如何用AI"
 
 ## 前置准备
@@ -213,6 +216,135 @@ python scripts/deep_research_wrapper.py --company-name "<公司名称>" --countr
 
 ---
 
+#### 阶段5：报告后的系统构建分支（3.0 MVP）
+
+**步骤5.1：显式确认是否继续进入系统构建规划**
+
+报告输出完成后，必须显式询问用户是否继续进入系统构建规划：
+
+- 如果用户拒绝：在报告阶段结束本次任务
+- 如果用户接受：进入阶段6
+
+推荐表达：
+
+- “报告部分已经完成。如果你愿意，我可以继续基于这份企业上下文，帮你把系统建设思路整理成可构建的多维表清单。要继续吗？”
+
+**步骤5.2：单入口 + 显式模式分支**
+
+本 Skill 保持单入口：
+
+- 所有请求先走报告主链路
+- 只有报告完成后，才进入系统构建分支
+
+不要在用户还没看完报告前直接跳去做系统构建。
+
+---
+
+#### 阶段6：系统建设意图澄清（3.0 MVP）
+
+**步骤6.1：控制在 3-4 轮内**
+
+参考 [references/system-build-clarification.md](references/system-build-clarification.md)：
+
+- 最多进行 3-4 轮澄清
+- 信息足够时提前停止
+- 每轮只补最缺的一类信息
+
+**步骤6.2：优先补齐以下维度**
+
+1. 系统目标
+2. 主要使用角色
+3. 核心业务流程
+4. 当前痛点与约束
+5. 是否需要流程图
+
+**步骤6.3：澄清阶段边界**
+
+- 不要求用户一次性填写完整 PRD
+- 不生成字段级结构
+- 不生成最终 API 请求 JSON
+- 只为后续“多维表清单规划”补足必要上下文
+
+---
+
+#### 阶段7：多维表清单规划与确认（3.0 MVP）
+
+**步骤7.1：只输出中间结构**
+
+参考 [references/table-planning-output-schema.md](references/table-planning-output-schema.md)，只能输出以下中间结构：
+
+```json
+[
+  {
+    "table_name": "CRM客户管理",
+    "user_requirement": "..."
+  }
+]
+```
+
+**关键边界：**
+
+- 智能体只输出 `table_name` + `user_requirement`
+- 智能体不输出最终 API payload
+- 智能体不输出字段级 schema
+
+**步骤7.2：用户确认表清单**
+
+在进入构建前，必须把表清单展示给用户确认。用户可进行：
+
+- 直接确认
+- 删除某张表
+- 增加某张表
+- 修改某张表需求描述
+
+只有在用户明确确认后，才能进入阶段8。
+
+---
+
+#### 阶段8：批量构建执行（3.0 MVP）
+
+**步骤8.1：使用脚本拼装最终请求体**
+
+运行：
+
+```bash
+python scripts/build_batch_payload.py --input "<确认后的表清单 JSON>" --output "<batch payload 输出路径>"
+```
+
+该脚本负责：
+
+- 生成唯一 `client_batch_id`
+- 生成唯一 `client_item_id`
+- 拼装最终 batch payload
+
+**步骤8.2：使用脚本执行流式构建**
+
+运行：
+
+```bash
+python scripts/stream_batch_build.py --payload "<batch payload 路径>" --api-base-url "http://127.0.0.1:1128"
+```
+
+参考 [references/batch-build-api-contract.md](references/batch-build-api-contract.md)：
+
+- 通过 `POST /api/bitable/build/batch` 提交请求
+- 持续消费 SSE 事件
+- 将 `job_progress.message` 直接展示给用户
+- 收到 `batch_accepted` 后保存 `request_id`
+- 如流中断且已拿到 `request_id`，则改用状态查询接口补查
+
+**步骤8.3：MVP 范围限制**
+
+参考 [references/mvp-scope-and-fallbacks.md](references/mvp-scope-and-fallbacks.md)：
+
+- 不做失败项自动重试
+- 不做本地 SQLite
+- 不做历史任务中心
+
+如果有部分表失败，只做结果告知和失败原因总结，不做自动重试。
+
+---
+
 ### 可选分支
 
 **分支A：快速扫描模式**
@@ -248,6 +380,17 @@ python scripts/deep_research_wrapper.py --company-name "<公司名称>" --countr
   - 用途：生成企业调研框架和搜索问题清单
   - 参数：`--company-name`（必需）、`--country`（默认"中国"）、`--format`（markdown/json，默认markdown）
   - 依赖：Python 3.8+，无第三方包依赖
+- [scripts/build_batch_payload.py](scripts/build_batch_payload.py)
+  - 用途：将确认后的表清单拼装为 batch build API 请求体
+  - 参数：`--input`、`--output`、`--language`、`--with-generate-flowchart`、`--prompt-variant`
+  - 依赖：Python 3.8+，无第三方包依赖
+- [scripts/stream_batch_build.py](scripts/stream_batch_build.py)
+  - 用途：提交 batch build 请求、消费 SSE、在流中断后补查状态
+  - 参数：`--payload`、`--api-base-url`
+  - 依赖：Python 3.8+，无第三方包依赖
+- [scripts/runtime_state.py](scripts/runtime_state.py)
+  - 用途：保存当前运行所需的轻量本地状态（如 `request_id`）
+  - 依赖：Python 3.8+，无第三方包依赖
 
 ### 领域参考
 - [references/company-info-config.md](references/company-info-config.md)
@@ -268,6 +411,18 @@ python scripts/deep_research_wrapper.py --company-name "<公司名称>" --countr
 - [references/typical-ai-scenarios.md](references/typical-ai-scenarios.md)
   - 何时读取：阶段3步骤3.2
   - 内容：8大行业（建筑、电商、金融、制造、医疗、教育、法律、物流）的典型AI场景参考库
+- [references/system-build-clarification.md](references/system-build-clarification.md)
+  - 何时读取：阶段6
+  - 内容：系统建设意图澄清目标、轮次控制、提前停止条件
+- [references/table-planning-output-schema.md](references/table-planning-output-schema.md)
+  - 何时读取：阶段7
+  - 内容：中间表清单唯一允许的输出结构与正反例
+- [references/batch-build-api-contract.md](references/batch-build-api-contract.md)
+  - 何时读取：阶段8
+  - 内容：batch build API 请求格式、SSE 事件、状态补查方式
+- [references/mvp-scope-and-fallbacks.md](references/mvp-scope-and-fallbacks.md)
+  - 何时读取：阶段8
+  - 内容：MVP 不做范围、流中断兜底文案、部分失败告知方式
 
 ### 输出资产
 - 无固定模板，报告由智能体基于V2.1模板和用户案例动态生成
@@ -278,11 +433,13 @@ python scripts/deep_research_wrapper.py --company-name "<公司名称>" --countr
 1. **必须先完成阶段1（深度调研）的所有搜索**，才能进入阶段2分析
 2. **必须先完成阶段2（分析诊断）**，才能进入阶段3场景生成
 3. **必须先完成阶段3（场景地图）**，才能进入阶段4报告生成
-4. 严禁跳过搜索阶段直接生成报告
+4. 报告完成后，只有用户明确接受，才能进入阶段5-8的系统构建分支
+5. 严禁跳过搜索阶段直接生成报告
 
 ### 工具依赖要求
 1. **web-search**：智能体必须具备网络搜索能力，用于企业信息调研和行业案例收集
-2. 脚本仅生成调研框架，实际调研工作由智能体通过 web-search 完成
+2. `deep_research_wrapper.py` 仅生成调研框架，实际调研工作由智能体通过 web-search 完成
+3. batch build 阶段必须通过脚本执行，不要在对话中手写最终请求 JSON
 
 ### 内容质量要求
 1. **场景数量**：AI场景全量表必须达到30个以上
@@ -296,6 +453,12 @@ python scripts/deep_research_wrapper.py --company-name "<公司名称>" --countr
 2. 行业案例必须来自权威来源（官方报道、行业报告、知名媒体）
 3. 痛点和收益数据必须有具体数字或可量化的描述
 4. 技术方案描述必须准确、专业
+
+### 3.0 MVP 边界要求
+1. 智能体只生成中间表清单，不生成最终 API payload
+2. 执行状态以 API 返回和状态查询接口为准，不以对话记忆为准
+3. MVP 阶段不做失败项自动重试
+4. 流中断后，如已拿到 `request_id`，优先调用状态查询接口补查
 
 ### 报告生成原则
 1. **客户视角**：整个报告要以客户为中心，让客户感受到"你懂我的业务"
