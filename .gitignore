@@ -28,6 +28,7 @@ Thumbs.db
 output/
 reports/
 *.pdf
+.runtime/
 
 # Environment
 .env
