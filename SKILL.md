@@ -23,6 +23,7 @@ description: 企业AI场景地图与系统构建规划工具。通过 web-search
 - 依赖说明：
   - 智能体需要具备 **web-search**（网络搜索）工具能力
   - Python 3.8+（用于运行调研框架生成脚本）
+  - Node.js 18+ 与 `npx`（用于调用 `basebuilder-cli` 执行批量构建）
   - 无第三方 Python 包依赖
 
 ## 操作步骤
@@ -290,7 +291,25 @@ python scripts/deep_research_wrapper.py --company-name "<公司名称>" --countr
 
 **步骤7.2：用户确认表清单**
 
-在进入构建前，必须把表清单展示给用户确认。用户可进行：
+在进入构建前，必须把表清单展示给用户确认。
+
+给用户确认时，不要直接展示 JSON。应使用自然语言或 Markdown 表格展示，推荐格式：
+
+| 表序号 | 表名称 | 用户需求 |
+|---:|---|---|
+| 1 | CRM客户管理 | 记录客户基础信息、跟进状态、商机阶段，并支持销售团队协作管理。 |
+
+也可以在对话中使用自然语言逐条展示：
+
+```text
+表序号：1
+表名称：CRM客户管理
+用户需求：记录客户基础信息、跟进状态、商机阶段，并支持销售团队协作管理。
+```
+
+展示给用户的是确认视图；内部仍必须保留阶段7.1规定的 `table_name` + `user_requirement` 中间结构，并在用户明确确认后交给脚本拼装最终 batch payload。
+
+用户可进行：
 
 - 直接确认
 - 删除某张表
@@ -317,21 +336,21 @@ python scripts/build_batch_payload.py --input "<确认后的表清单 JSON>" --o
 - 生成唯一 `client_item_id`
 - 拼装最终 batch payload
 
-**步骤8.2：使用脚本执行流式构建**
+**步骤8.2：使用 `npx basebuilder-cli` 执行流式构建**
 
 运行：
 
 ```bash
-python scripts/stream_batch_build.py --payload "<batch payload 路径>" --api-base-url "http://127.0.0.1:1128"
+npx basebuilder-cli build --input "<batch payload 路径>" --json --base-url "http://127.0.0.1:1128"
 ```
 
 参考 [references/batch-build-api-contract.md](references/batch-build-api-contract.md)：
 
 - 通过 `POST /api/bitable/build/batch` 提交请求
-- 持续消费 SSE 事件
+- `basebuilder-cli` 持续消费 SSE 事件，并以 JSON Lines 输出事件
 - 将 `job_progress.message` 直接展示给用户
-- 收到 `batch_accepted` 后保存 `request_id`
-- 如流中断且已拿到 `request_id`，则改用状态查询接口补查
+- 收到 `batch_accepted` 后记录输出中的 `request_id`
+- 如构建命令中断且已拿到 `request_id`，使用 `npx basebuilder-cli status <request_id> --json --base-url "http://127.0.0.1:1128"` 补查状态
 
 **步骤8.3：MVP 范围限制**
 
@@ -384,13 +403,14 @@ python scripts/stream_batch_build.py --payload "<batch payload 路径>" --api-ba
   - 用途：将确认后的表清单拼装为 batch build API 请求体
   - 参数：`--input`、`--output`、`--language`、`--with-generate-flowchart`、`--prompt-variant`
   - 依赖：Python 3.8+，无第三方包依赖
-- [scripts/stream_batch_build.py](scripts/stream_batch_build.py)
-  - 用途：提交 batch build 请求、消费 SSE、在流中断后补查状态
-  - 参数：`--payload`、`--api-base-url`
-  - 依赖：Python 3.8+，无第三方包依赖
-- [scripts/runtime_state.py](scripts/runtime_state.py)
-  - 用途：保存当前运行所需的轻量本地状态（如 `request_id`）
-  - 依赖：Python 3.8+，无第三方包依赖
+
+### 外部命令
+- `npx basebuilder-cli build --input <batch payload 路径> --json --base-url http://127.0.0.1:1128`
+  - 用途：提交 batch build 请求、消费 SSE、输出 JSON Lines 进度事件
+  - 依赖：Node.js 18+ 与 `npx`
+- `npx basebuilder-cli status <request_id> --json --base-url http://127.0.0.1:1128`
+  - 用途：构建命令中断后，根据已知 `request_id` 补查状态
+  - 依赖：Node.js 18+ 与 `npx`
 
 ### 领域参考
 - [references/company-info-config.md](references/company-info-config.md)
@@ -439,7 +459,8 @@ python scripts/stream_batch_build.py --payload "<batch payload 路径>" --api-ba
 ### 工具依赖要求
 1. **web-search**：智能体必须具备网络搜索能力，用于企业信息调研和行业案例收集
 2. `deep_research_wrapper.py` 仅生成调研框架，实际调研工作由智能体通过 web-search 完成
-3. batch build 阶段必须通过脚本执行，不要在对话中手写最终请求 JSON
+3. batch payload 必须通过 `build_batch_payload.py` 生成，不要在对话中手写最终请求 JSON
+4. batch build 执行必须通过 `npx basebuilder-cli` 完成，不要使用对话内手写 HTTP/SSE 逻辑
 
 ### 内容质量要求
 1. **场景数量**：AI场景全量表必须达到30个以上

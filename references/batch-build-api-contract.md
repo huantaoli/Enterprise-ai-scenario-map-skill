@@ -2,7 +2,7 @@
 
 ## 适用范围
 
-本说明面向 Skill 3.0 MVP，描述本地批量构建接口的最小使用方式。
+本说明面向 Skill 3.0 MVP，描述通过 `basebuilder-cli` 调用本地批量构建接口的最小使用方式。
 
 当前本地示例地址：
 
@@ -13,10 +13,31 @@ http://127.0.0.1:1128
 ## 核心原则
 
 - Skill 只传自然语言需求，不传字段级设计
-- Skill 通过脚本调用 API，不在对话中手写最终请求体
-- Skill 以 `request_id` 作为流中断后的状态补查依据
+- Skill 通过 `build_batch_payload.py` 生成最终请求体，不在对话中手写最终请求体
+- Skill 通过 `npx basebuilder-cli` 提交请求、消费 SSE 和查询状态
+- Skill 以 `request_id` 作为构建命令中断后的状态补查依据
 
-## 提交接口
+## CLI 调用方式
+
+提交批量构建：
+
+```bash
+npx basebuilder-cli build --input "<batch payload 路径>" --json --base-url "http://127.0.0.1:1128"
+```
+
+状态补查：
+
+```bash
+npx basebuilder-cli status "<request_id>" --json --base-url "http://127.0.0.1:1128"
+```
+
+说明：
+
+- `--input` 接收 `build_batch_payload.py` 生成的完整 batch payload JSON
+- `--json` 会输出 JSON Lines，便于智能体逐行解析事件
+- `--base-url` 可省略；默认读取 `BASEBUILD_BASE_URL`，没有环境变量时使用 `http://127.0.0.1:1128`
+
+## 底层提交接口
 
 ```http
 POST /api/bitable/build/batch
@@ -67,7 +88,7 @@ Accept: text/event-stream
 
 ## SSE 事件
 
-接口返回 `text/event-stream`，Skill 侧需要持续读取，直到收到最终事件或连接异常中断。
+接口返回 `text/event-stream`。Skill 侧不直接解析 HTTP SSE，由 `basebuilder-cli` 读取并转换为 JSON Lines 输出，直到收到最终事件或连接异常中断。
 
 ### `batch_accepted`
 
@@ -150,15 +171,16 @@ GET /api/bitable/build/batch/{request_id}/status
 ## Skill 侧最小使用流程
 
 1. 调用脚本拼装最终 batch payload
-2. 提交 `POST /api/bitable/build/batch`
-3. 持续消费 SSE
-4. 收到 `batch_accepted` 后保存 `request_id`
-5. 若流中断且已知 `request_id`，调用状态查询接口
+2. 运行 `npx basebuilder-cli build --input <payload> --json --base-url <url>`
+3. 逐行读取 CLI 输出的 JSON Lines 事件
+4. 收到 `batch_accepted` 后记录 `request_id`
+5. 若构建命令中断且已知 `request_id`，运行 `npx basebuilder-cli status <request_id> --json --base-url <url>`
 6. 将当前或最终状态反馈给用户
 
 ## 不要这样做
 
 - 不要让模型直接构造最终 API payload
 - 不要把字段级 schema 当作 `user_requirement` 传入
-- 不要因为 SSE 一段时间安静，就立刻判断任务失败
+- 不要绕过 `basebuilder-cli` 在对话中手写 HTTP/SSE 逻辑
+- 不要因为 CLI 一段时间只输出 keepalive 或暂时安静，就立刻判断任务失败
 - 不要在 MVP 阶段实现失败 item 自动重试
